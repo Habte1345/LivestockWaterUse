@@ -90,6 +90,7 @@ from __future__ import annotations
 
 import argparse
 import calendar
+import warnings
 import sys
 import time
 from pathlib import Path
@@ -120,6 +121,18 @@ except ImportError:                                     # pragma: no cover
         @staticmethod
         def write(msg):
             print(msg)
+
+# pandas warns when concatenating frames in which some column is entirely
+# NA, because the resulting dtype is ambiguous. Every value column is
+# explicitly coerced to float64 below and empty frames are filtered out
+# before any concat, so the ambiguity cannot arise here -- the warning is
+# pure noise across 126 requests. Silenced narrowly, by category and
+# message, so unrelated FutureWarnings still surface.
+warnings.filterwarnings(
+    "ignore",
+    message=".*DataFrame concatenation with empty or all-NA entries.*",
+    category=FutureWarning,
+)
 
 _REPO = "/scratch/hdagne1/LivestockWaterUse"
 DATA_DIR = f"{_REPO}/data/climate"
@@ -258,7 +271,17 @@ def reduce_year(ee, img, regions, keep: List[str], scale: int) -> pd.DataFrame:
                            scale=scale, tileScale=4)
     props = keep + value_columns()
     rows = fc.select(props, retainGeometry=False).getInfo()["features"]
-    return pd.DataFrame([r["properties"] for r in rows])
+    df = pd.DataFrame([r["properties"] for r in rows])
+
+    # Every expected column present, and every value column a real float.
+    # A region with no data would otherwise yield an object column of
+    # Nones, which is what makes concat's result dtype ambiguous.
+    for c in props:
+        if c not in df.columns:
+            df[c] = np.nan
+    vals = value_columns()
+    df[vals] = df[vals].apply(pd.to_numeric, errors="coerce").astype("float64")
+    return df[props]
 
 
 def with_retry(fn, attempts: int = 5, base_delay: float = 4.0):
@@ -299,10 +322,12 @@ def fetch_level(ee, regions, keep: List[str], level: str, years: range,
                 fix = with_retry(lambda: reduce_year(
                     ee, img, small, keep, FALLBACK_SCALE))
                 if not fix.empty:
-                    df = pd.concat([df.loc[~missing], fix], ignore_index=True)
+                    parts = [x for x in (df.loc[~missing], fix) if not x.empty]
+                    df = pd.concat(parts, ignore_index=True)
 
         df["year"] = np.int16(year)
-        frames.append(df)
+        if not df.empty:
+            frames.append(df)
     bar.close()
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
@@ -315,8 +340,9 @@ def to_long(wide: pd.DataFrame, keep: List[str]) -> pd.DataFrame:
         present = [c for c in cols if c in wide.columns]
         sub = wide[keep + present].rename(columns=cols).copy()
         sub["month"] = np.int8(m)
-        out.append(sub)
-    return pd.concat(out, ignore_index=True)
+        if not sub.empty:
+            out.append(sub)
+    return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
 
 def magnus_ratio_rh(t_c, td_c):
