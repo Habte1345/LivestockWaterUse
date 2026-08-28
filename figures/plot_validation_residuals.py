@@ -152,7 +152,7 @@ def plot(data_dir: str = DATA_DIR, shapefile: Optional[str] = None,
     # width have to move together. Changing panel_h alone squashes the
     # maps; the default keeps the 1.61 width-to-height ratio the layout was
     # built around, and --panel-h rescales panel_w to preserve it.
-    fig = plt.figure(figsize=(panel_h * 2.61 * ncol, panel_h * nrow),
+    fig = plt.figure(figsize=(panel_h * 1.61 * ncol, panel_h * nrow),
                      dpi=200)
 
     for i, (short, cbl, year, d, norm) in enumerate(panels, start=1):
