@@ -152,7 +152,7 @@ def plot(data_dir: str = DATA_DIR, shapefile: Optional[str] = None,
     # width have to move together. Changing panel_h alone squashes the
     # maps; the default keeps the 1.61 width-to-height ratio the layout was
     # built around, and --panel-h rescales panel_w to preserve it.
-    fig = plt.figure(figsize=(panel_h * 1.61 * ncol, panel_h * nrow),
+    fig = plt.figure(figsize=(panel_h * 2.61 * ncol, panel_h * nrow),
                      dpi=200)
 
     for i, (short, cbl, year, d, norm) in enumerate(panels, start=1):
@@ -200,7 +200,7 @@ def plot(data_dir: str = DATA_DIR, shapefile: Optional[str] = None,
             # on hist() puts the residual on the y axis.
             ins = ax.inset_axes([0.78, 0.04, 0.19, 0.42])
             lim = float(norm.boundaries[-1])
-            ins.hist(np.clip(v, -lim, lim), bins=10, color="blue", alpha=0.6,
+            ins.hist(np.clip(v, -lim, lim), bins=20, color="blue", alpha=0.6,
                      edgecolor="black", linewidth=0.4,
                      orientation="horizontal")
             mean_val = float(np.mean(v))
@@ -226,13 +226,13 @@ def plot(data_dir: str = DATA_DIR, shapefile: Optional[str] = None,
             ins.set_yticks([])
             ins.patch.set_alpha(0.85)
 
-        print(f"  {short:<6}{year}  n={len(v):>6,}  "
-              f"mean {np.mean(v):+.4g}  median {np.median(v):+.4g}  "
-              f"RMSE {np.sqrt(np.mean(v**2)):.4g}")
+        # print(f"  {short:<6}{year}  n={len(v):>6,}  "
+        #       f"mean {np.mean(v):+.4g}  median {np.median(v):+.4g}  "
+        #       f"RMSE {np.sqrt(np.mean(v**2)):.4g}")
 
-    if missing:
-        print(f"  not drawn: {', '.join(missing)} "
-              f"-- no overlapping years with the USGS record")
+    # if missing:
+    #     print(f"  not drawn: {', '.join(missing)} "
+    #           f"-- no overlapping years with the USGS record")
 
     plt.tight_layout()
     _show(fig)
