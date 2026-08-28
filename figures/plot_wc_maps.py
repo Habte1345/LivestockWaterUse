@@ -47,7 +47,7 @@ CONUS_EXTENT = [-125, -66, 24, 50]
 COUNTY_URL = ("https://www2.census.gov/geo/tiger/GENZ2018/shp/"
               "cb_2018_us_county_20m.zip")
 
-CMAP, CLIP_PCT = "RdYlGn_r", 1.0
+CMAP, CLIP_PCT = "bwr", 1.0
 UNITS = {"mgal": ("wc_mgal_d", "WC [Mgal d$^{-1}$]"),
          "m3": ("wc_m3_d", "WC [m$^3$ d$^{-1}$]"),
          "l": ("wc_l_d", "WC [L d$^{-1}$]")}
