@@ -174,7 +174,11 @@ PINS = {
 # 'COWS, MILK' is suppressed. They are not emitted as livestock types.
 KEEP_CLASSES = {
     "CATTLE": ["INCL CALVES", "COWS, MILK", "COWS, BEEF", "COWS"],
-    "HOGS": ["ALL CLASSES"],
+    # BREEDING is retained as a working class, not emitted as a type: the
+    # breeding share of the herd is a county attribute that drives water
+    # use hard, since sows drink far more than market pigs. Treating it as
+    # unknown would push that variance into the unexplainable pile.
+    "HOGS": ["ALL CLASSES", "BREEDING"],
     "CHICKENS": ["LAYERS", "BROILERS"],
 }
 
@@ -188,7 +192,8 @@ REQUIRED = [("CATTLE", "INCL CALVES"), ("CATTLE", "COWS, MILK"),
 LIVESTOCK_TYPES = ("dairy_cattle", "beef_cattle", "poultry", "hogs")
 
 OUTPUT_SCHEMA = ["year", "fips", "state_abbrev", "state_name",
-                 "county_name", "livestock_type", "head"]
+                 "county_name", "livestock_type", "head",
+                 "layer_fraction", "breeding_fraction"]
 
 NON_CONUS_FIPS = {"02", "15", "60", "66", "69", "72", "78"}
 
@@ -443,15 +448,29 @@ def to_long(rep: Report, df: pd.DataFrame, year: int) -> pd.DataFrame:
         f"{int(poultry.notna().sum()):,} counties; "
         f"both present in {int((layers.notna() & broilers.notna()).sum()):,}")
 
+    hogs_all = col("HOGS", "ALL CLASSES")
+    hogs_breeding = col("HOGS", "BREEDING")
+
     out = pd.DataFrame({
         "dairy_cattle": dairy,
         "beef_cattle": beef,
-        "hogs": col("HOGS", "ALL CLASSES"),
+        "hogs": hogs_all,
         "poultry": poultry,
         # kept for the QA split only, dropped before the table is written
         "_layers": layers,
         "_broilers": broilers,
     })
+
+    # Herd composition: observable county attributes, carried alongside the
+    # head counts because they drive per-head water use.
+    composition = pd.DataFrame({
+        "layer_fraction": layers / poultry.where(poultry > 0),
+        "breeding_fraction": hogs_breeding / hogs_all.where(hogs_all > 0),
+    })
+    rep(f"  {year}: layer fraction reported for "
+        f"{int(composition['layer_fraction'].notna().sum()):,} counties, "
+        f"breeding fraction for "
+        f"{int(composition['breeding_fraction'].notna().sum()):,}")
 
     # melt rather than stack: stack's dropna argument behaves differently
     # across pandas versions and was removed in 3.0.
@@ -459,6 +478,12 @@ def to_long(rep: Report, df: pd.DataFrame, year: int) -> pd.DataFrame:
             .melt(id_vars="fips", var_name="livestock_type", value_name="head")
             .dropna(subset=["head"]))
     long = long.merge(ident, left_on="fips", right_index=True, how="left")
+    long = long.merge(composition, left_on="fips", right_index=True, how="left")
+
+    # Each fraction belongs to one type only; blank it elsewhere so the
+    # column cannot be misread as applying to cattle.
+    long.loc[long["livestock_type"] != "poultry", "layer_fraction"] = np.nan
+    long.loc[long["livestock_type"] != "hogs", "breeding_fraction"] = np.nan
     long["year"] = np.int16(year)
     return long[OUTPUT_SCHEMA]
 
@@ -533,6 +558,17 @@ def qa(rep: Report, df: pd.DataFrame, flags: Dict[int, Dict[str, int]]) -> None:
                 f"counties appear in all 5 censuses")
         else:
             rep(f"  {t:<14} present in only {len(per_year)} census years")
+
+    rep("\n  herd composition (observable county attributes, not sampled)")
+    for col, t in (("layer_fraction", "poultry"),
+                   ("breeding_fraction", "hogs")):
+        if col in df:
+            v = df.loc[df["livestock_type"] == t, col].dropna()
+            if len(v):
+                rep(f"    {col:<18} n={len(v):,}  min {v.min():.3f}  "
+                    f"median {v.median():.3f}  max {v.max():.3f}")
+            else:
+                rep(f"    {col:<18} not reported")
 
     rep("\n  zero head counts (a reported zero, not a suppression)")
     z = df[df["head"] == 0].groupby("livestock_type").size()
@@ -657,6 +693,10 @@ def run(data_dir: str = DATA_DIR, raw_dir: Optional[str] = RAW_DIR,
             sub = (df[df["livestock_type"] == t]
                    .drop(columns=["livestock_type"])
                    .reset_index(drop=True))
+            # Drop composition columns that do not apply to this type.
+            sub = sub.drop(columns=[c for c in
+                                    ("layer_fraction", "breeding_fraction")
+                                    if c in sub and sub[c].isna().all()])
             if sub.empty:
                 rep(f"  {t}: no rows, file not written")
                 continue

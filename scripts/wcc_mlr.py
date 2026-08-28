@@ -487,8 +487,9 @@ def gen_dairy(rng, n):
 
     return pd.DataFrame({
         "age_months": age_months, "bw_kg": bw, "temp_c": tmean,
-        "temp_min_c": tmin, "lactating": lactating, "dmi_kg_d": dmi,
-        "milk_kg_d": milk,
+        "temp_min_c": tmin, "rh_pct": rh, "wind_kmh": wind,
+        "sunlight_h": sun,
+        "lactating": lactating, "dmi_kg_d": dmi, "milk_kg_d": milk,
         "wcc_expected_l_d": wcc_exp, "wcc_expected_gal_d": wcc_exp * GAL_PER_L,
         "wcc_l_d": wcc, "wcc_gal_d": wcc * GAL_PER_L,
         "crosscheck_l_d": cross,
@@ -513,7 +514,8 @@ def gen_beef(rng, n):
 
     return pd.DataFrame({
         "age_months": age_months, "bw_kg": bw, "temp_c": tmean,
-        "rh_pct": rh, "wind_kmh": wind, "sunlight_h": sun,
+        "temp_min_c": tmin, "rh_pct": rh, "wind_kmh": wind,
+        "sunlight_h": sun,
         "ceti": ceti(tmean, rh, wind, sun), "dmi_kg_d": dmi,
         "wcc_expected_l_d": wcc_exp, "wcc_expected_gal_d": wcc_exp * GAL_PER_L,
         "wcc_l_d": wcc, "wcc_gal_d": wcc * GAL_PER_L,
@@ -530,9 +532,19 @@ def gen_hogs(rng, n):
     """
     tmean, tmin, rh, wind, sun = _climate(rng, n)
 
-    # Share of the inventory that is breeding stock.
-    breeding = np.clip(rng.normal(0.11, 0.03, n), 0.03, 0.25)
-    bw = np.clip(rng.normal(95.0, 26.0, n), 45.0, 230.0)
+    # Share of the inventory that is breeding stock. Reported per county by
+    # the census, so it is an observable attribute rather than noise.
+    breeding = np.clip(rng.normal(0.11, 0.06, n), 0.02, 0.45)
+
+    # Herd-average weight follows from that share rather than being drawn
+    # independently: a breeding sow runs near 200 kg while a market pig
+    # averages about 65 kg across its cycle. Sampling the two separately
+    # made intake -- the single largest driver of hog WCC -- unexplainable
+    # from anything a county reports, when in fact most of it is implied by
+    # the composition the census already gives.
+    sow_bw = np.clip(rng.normal(200.0, 18.0, n), 150.0, 260.0)
+    market_bw = np.clip(rng.normal(66.0, 9.0, n), 40.0, 110.0)
+    bw = breeding * sow_bw + (1.0 - breeding) * market_bw
     age_months = np.clip(rng.normal(5.0, 1.2, n), 2.0, 14.0)
     dmi = np.clip(0.10 * bw ** 0.75 + rng.normal(0.0, 0.20, n), 0.8, 7.0)
 
@@ -550,6 +562,8 @@ def gen_hogs(rng, n):
 
     return pd.DataFrame({
         "age_months": age_months, "bw_kg": bw, "temp_c": tmean,
+        "temp_min_c": tmin, "rh_pct": rh, "wind_kmh": wind,
+        "sunlight_h": sun,
         "breeding": breeding, "dmi_kg_d": dmi, "water_feed_ratio": wfr,
         "wcc_expected_l_d": wcc_exp, "wcc_expected_gal_d": wcc_exp * GAL_PER_L,
         "wcc_l_d": wcc, "wcc_gal_d": wcc * GAL_PER_L,
@@ -568,7 +582,12 @@ def gen_poultry(rng, n, broiler_fraction=BROILER_FRACTION):
     tmean, tmin, rh, wind, sun = _climate(rng, n)
 
     # Share of the county flock that is layers rather than broilers.
-    layer = np.clip(rng.normal(1.0 - broiler_fraction, 0.06, n), 0.02, 0.98)
+    # Layer share of the county flock: reported by the census, so observed
+    # rather than sampled at application time. Widened here relative to the
+    # national mean because counties differ enormously -- egg-belt counties
+    # are nearly all layers, broiler-belt counties nearly all broilers --
+    # and that spread is exactly what the county data resolves.
+    layer = np.clip(rng.normal(1.0 - broiler_fraction, 0.22, n), 0.02, 0.98)
 
     fi_layer = np.clip(rng.normal(0.112, 0.008, n), 0.090, 0.140)
     # Flock-average broiler age across a continuously stocked cycle.
@@ -592,6 +611,8 @@ def gen_poultry(rng, n, broiler_fraction=BROILER_FRACTION):
 
     return pd.DataFrame({
         "age_weeks": age_weeks, "bw_kg": bw, "temp_c": tmean,
+        "temp_min_c": tmin, "rh_pct": rh, "wind_kmh": wind,
+        "sunlight_h": sun,
         "layer": layer, "dmi_kg_d": dmi,
         "wcc_expected_l_d": wcc_exp, "wcc_expected_gal_d": wcc_exp * GAL_PER_L,
         "wcc_l_d": wcc, "wcc_gal_d": wcc * GAL_PER_L,
