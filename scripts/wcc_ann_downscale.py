@@ -221,45 +221,84 @@ def climate_dependent(wcc_mod, name: str, samples: pd.DataFrame) -> Dict[str, bo
 
 
 def analytic_transfer(wcc_mod, name: str, coefs: dict,
-                      samples: pd.DataFrame, county: pd.DataFrame) -> np.ndarray:
+                      samples: pd.DataFrame, county: pd.DataFrame,
+                      n_bins: int = 60) -> np.ndarray:
     """
     Closed-form county WCC, for comparison with the ANN.
 
-    The MLR is linear, so the expectation over physiology at fixed climate
-    is exact:
+    The MLR is linear, so
 
-        E[WCC | climate] = b0 + sum_j b_j E[f_j | climate]
+        E[WCC | observed] = b0 + sum_j b_j E[f_j | observed]
 
-    It is evaluated by building the county feature matrix directly: county
-    climate in the climate columns, physiological sample MEANS in the
-    physiology columns, then the same add_interactions used at fit time.
-    That handles pure climate terms (temp^2 becomes the county
-    temperature squared) and physiology-times-climate products
-    (E[bw] times county temperature) in one step, because physiology and
-    climate were sampled independently.
+    The subtlety is what "E[f_j | observed]" means. Originally physiology
+    was sampled independently of everything the county reports, so the
+    plug-in sample MEAN was exact. That stopped being true once herd
+    composition became a county input: hog body weight is now built from
+    the breeding share, and poultry intake from the layer share, so
+    E[dmi] is no longer E[dmi | breeding].
 
-    Features that depend on no climate column are then overwritten with
-    their true sample mean, since a product of two physiological factors
-    is not in general the product of their means.
+    Using the unconditional mean there was a real error -- it biased the
+    closed form enough that the ANN appeared to beat the exact conditional
+    mean, which is impossible. Physiology is therefore conditioned on the
+    composition variable by binning the samples on it and taking per-bin
+    means, then mapping each county onto its bin. Climate remains
+    independent of physiology, so it needs no such treatment.
     """
     dep = climate_dependent(wcc_mod, name, samples)
-
     obs = county_features(name)
+    comp = list(COMPOSITION_FEATURES[name].values())
+
     frame = pd.DataFrame(index=range(len(county)))
     for c in obs:
         if c in county:
             frame[c] = county[c].to_numpy(dtype=float)
 
-    # Physiological base columns held at their sample mean.
-    base = [c for c in wcc_mod.BASE_FEATURES[name] if c not in obs]
-    for c in base:
-        if c in samples:
-            frame[c] = float(samples[c].mean())
-    for c in samples.columns:
-        if c not in frame and samples[c].dtype.kind in "fiub":
+    phys = [c for c in samples.columns
+            if c not in obs and samples[c].dtype.kind in "fiub"]
+
+    edges, lab, cl = np.array([]), None, None
+    if comp:
+        # Physiology conditioned on the composition the county reports.
+        key = comp[0]
+        edges = np.unique(np.quantile(samples[key],
+                                      np.linspace(0, 1, n_bins + 1)))
+        if len(edges) > 2:
+            lab = np.clip(np.digitize(samples[key], edges[1:-1]),
+                          0, len(edges) - 2)
+            table = (samples[phys].groupby(lab).mean()
+                     .reindex(range(len(edges) - 1)).ffill().bfill())
+            cl = np.clip(np.digitize(frame[key].to_numpy(dtype=float),
+                                     edges[1:-1]), 0, len(edges) - 2)
+            for c in phys:
+                frame[c] = table[c].to_numpy()[cl]
+        else:
+            for c in phys:
+                frame[c] = float(samples[c].mean())
+    else:
+        for c in phys:
             frame[c] = float(samples[c].mean())
 
     frame = wcc_mod.add_interactions(name, frame)
+
+    # A feature that depends on no county input must take the sample mean
+    # of the FEATURE, not be rebuilt from mean inputs. For a nonlinear term
+    # those differ: mean(bw)^2 is not mean(bw^2), and the gap is the
+    # variance. That error put a constant offset on every beef prediction,
+    # because the beef model carries a bw_sq term.
+    #
+    # Where composition is a county input, that mean is taken within the
+    # composition bin, for the same conditioning reason as above.
+    indep = [f for f in wcc_mod.FEATURES[name] if not dep.get(f, False)]
+    indep_mean = {}
+    if indep:
+        if comp and len(edges) > 2:
+            ftab = (samples[indep].groupby(lab).mean()
+                    .reindex(range(len(edges) - 1)).ffill().bfill())
+            for f in indep:
+                indep_mean[f] = ftab[f].to_numpy()[cl]
+        else:
+            for f in indep:
+                indep_mean[f] = np.full(len(county), float(samples[f].mean()))
 
     out = np.full(len(county), float(coefs["intercept"]))
     for f in wcc_mod.FEATURES[name]:
@@ -267,7 +306,7 @@ def analytic_transfer(wcc_mod, name: str, coefs: dict,
         if dep.get(f, False) and f in frame:
             out += b * frame[f].to_numpy(dtype=float)
         else:
-            out += b * float(samples[f].mean())
+            out += b * indep_mean[f]
 
     # Match the ANN: no predictors, no value.
     out[~complete_mask(county, obs)] = np.nan
