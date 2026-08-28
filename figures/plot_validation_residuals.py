@@ -59,7 +59,7 @@ QUANTITIES = [
     ("consu", "WC", "WC residual [Mgal d$^{-1}$]"),
 ]
 
-CMAP, N_BINS, CLIP_PCT = "RdYlGn", 6, 2.0
+CMAP, N_BINS, CLIP_PCT = "bwr", 6, 2.0
 
 
 def make_boundary_norm(values, cmap, n_bins=N_BINS, clip_pct=CLIP_PCT):
@@ -200,11 +200,11 @@ def plot(data_dir: str = DATA_DIR, shapefile: Optional[str] = None,
             # on hist() puts the residual on the y axis.
             ins = ax.inset_axes([0.78, 0.04, 0.19, 0.42])
             lim = float(norm.boundaries[-1])
-            ins.hist(np.clip(v, -lim, lim), bins=30, color="#c1c97d",
+            ins.hist(np.clip(v, -lim, lim), bins=10, color="blue", alpha=0.6,
                      edgecolor="black", linewidth=0.4,
                      orientation="horizontal")
             mean_val = float(np.mean(v))
-            ins.axhline(np.clip(mean_val, -lim, lim), color="red",
+            ins.axhline(np.clip(mean_val, -lim, lim), color="magenta",
                         linestyle="--", linewidth=1.5)
             ins.axhline(0.0, color="0.35", linewidth=0.8)
             ins.set_ylim(-lim, lim)
@@ -219,8 +219,8 @@ def plot(data_dir: str = DATA_DIR, shapefile: Optional[str] = None,
             # Above the inset box, in axes coordinates: anywhere inside
             # the box can collide with a bar, because bar lengths depend on
             # the data and cannot be avoided by choosing a fixed position.
-            ins.text(1.0, 1.03, f"{mean_val:.4g}", color="blue",
-                     ha="right", va="bottom", fontsize=8,
+            ins.text(0.5, 0.5, f"{mean_val:.3g}", color="magenta",
+                     ha="center", va="bottom", fontsize=10,
                      transform=ins.transAxes)
             ins.set_xticks([])
             ins.set_yticks([])
