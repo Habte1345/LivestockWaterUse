@@ -128,7 +128,7 @@ def plot(data_dir: str = DATA_DIR, year: Optional[int] = None,
     cm = plt.get_cmap(cmap)
     col, label = UNITS[units]
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 7), dpi=200,
+    fig, axes = plt.subplots(4, 1, figsize=(8.5, 13.5), dpi=200,
                              subplot_kw={"projection": ccrs.PlateCarree()},
                              constrained_layout=True)
 
@@ -146,7 +146,7 @@ def plot(data_dir: str = DATA_DIR, year: Optional[int] = None,
 
         g.plot(column=col, cmap=cm, norm=norm, ax=ax, edgecolor="none",
                transform=ccrs.PlateCarree(), zorder=5,
-               missing_kwds={"color": "lightgrey", "edgecolor": "none"})
+               missing_kwds={"color": "white", "edgecolor": "none"})
         ax.add_feature(cfeature.STATES, edgecolor="gray",
                        linewidth=0.5, zorder=6)
         ax.add_feature(cfeature.COASTLINE, linewidth=0.6, zorder=6)
