@@ -70,6 +70,16 @@ PANELS = [
 sns.set_style("whitegrid")
 plt.rcParams["font.family"] = "serif"
 plt.rcParams["font.serif"] = ["DejaVu Serif"]
+plt.rcParams["axes.edgecolor"] = "0.3"
+plt.rcParams["axes.linewidth"] = 0.9
+plt.rcParams["grid.color"] = "0.88"
+plt.rcParams["grid.linewidth"] = 0.6
+
+# bwr is a diverging map, so on a linear count scale nearly every cell
+# sits in its white middle and the panel washes out. The density is put on
+# a log scale so the colour spans the orders of magnitude actually present
+# between the sparse tails and the dense core.
+CMAP = "jet"
 
 
 def _show(fig, screen_dpi: int = 110) -> None:
@@ -130,8 +140,8 @@ def fmt(v: float) -> str:
 
 
 def plot(data_dir: str = DATA_DIR, save: Optional[str] = None,
-         dpi: int = 600, gridsize: int = 100, units: str = "gal",
-         expected: bool = False):
+         dpi: int = 600, gridsize: int = 90, units: str = "gal",
+         expected: bool = False, cmap: str = CMAP):
     """
     Draw the figure and return it. Nothing is written to disk unless `save`
     is given a path.
@@ -156,11 +166,22 @@ def plot(data_dir: str = DATA_DIR, save: Optional[str] = None,
     unit_label = ("gal day$^{-1}$ head$^{-1}$" if units == "gal"
                   else "L day$^{-1}$ head$^{-1}$")
 
-    fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+    # constrained_layout, not subplots_adjust: the panels are forced to an
+    # equal aspect so that the 1:1 line is at 45 degrees, which makes their
+    # drawn size depend on the data range. Fixed spacing then leaves the
+    # x-labels of the top row sitting on the panels beneath.
+    fig, axes = plt.subplots(2, 2, figsize=(12, 12),
+                             constrained_layout=True)
     axes = axes.flatten()
 
     missing = []
-    for ax, (stem, title) in zip(axes, PANELS):
+    for idx, (ax, (stem, title)) in enumerate(zip(axes, PANELS)):
+        # Both quantities are shared across the 2 x 2 grid, so the y label
+        # goes on the left column only and the x label on the bottom row
+        # only.
+        show_y = idx % 2 == 0
+        show_x = idx >= 2
+
         path = base / f"wcc_surrogate_{stem}.feather"
         if not path.exists():
             missing.append(path.name)
@@ -195,13 +216,13 @@ def plot(data_dir: str = DATA_DIR, save: Optional[str] = None,
         r2_identity = 1.0 - (np.sum((regression - literature) ** 2)
                              / np.sum((literature - literature.mean()) ** 2))
 
-        ax.hexbin(
+        hb = ax.hexbin(
             literature,
             regression,
             gridsize=gridsize,
-            alpha=0.8,
             edgecolors="none",
-            cmap="jet",
+            cmap=cmap,
+            bins="log",
             mincnt=1,
         )
 
@@ -211,23 +232,30 @@ def plot(data_dir: str = DATA_DIR, save: Optional[str] = None,
         ax.plot(x_line, y_line, color="red", lw=2)
         ax.plot(x_line, x_line, "--", color="black", lw=1)
 
-        ax.set_title(title, fontsize=14, fontweight="bold")
-        ax.set_xlabel(f"Literature-based WCCs [{unit_label}]",
-                      fontsize=12, labelpad=10)
-        ax.set_ylabel(f"MLR WCCs [{unit_label}]", fontsize=12, labelpad=10)
+        ax.set_title(title, fontsize=16, fontweight="bold")
+        if show_x:
+            ax.set_xlabel(f"Literature-based WCCs [{unit_label}]",
+                          fontsize=16, labelpad=16)
+        if show_y:
+            ax.set_ylabel(f"MLR WCCs [{unit_label}]", fontsize=16,
+                          labelpad=10)
 
         stats = (f"$R^2$ = {r2:.2f}\n"
                  f"RMSE = {fmt(rmse)}\n"
                 #  f"$R^2_{{1:1}}$ = {r2_identity:.2f}\n"
-                 f"n = {len(literature):,}")
+                #  f"n = {len(literature):,}"
+                 )
         ax.text(0.05, 0.92, stats, transform=ax.transAxes,
-                fontsize=13, verticalalignment="top")
+                fontsize=16, verticalalignment="top")
 
         print(f"  {title:<14} n={len(literature):>7,}  "
               f"slope={model.coef_[0]:.4f}  intercept={fmt(model.intercept_)}  "
               f"R2={r2:.4f}  RMSE={fmt(rmse)}  R2(1:1)={r2_identity:.4f}")
 
-    plt.tight_layout()
+    # cb = fig.colorbar(hb, ax=axes.tolist(), shrink=0.99, aspect=32,
+    #                   pad=0.02)
+    # cb.set_label("Sample density [count per bin]", fontsize=11)
+    # cb.ax.tick_params(labelsize=9)
 
     if missing:
         print(f"  WARNING: missing input files: {missing}")
@@ -257,7 +285,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="optional path to write the figure to; by default "
                          "it is only displayed")
     ap.add_argument("--dpi", type=int, default=600)
-    ap.add_argument("--gridsize", type=int, default=100)
+    ap.add_argument("--gridsize", type=int, default=90)
+    ap.add_argument("--cmap", default=CMAP)
     ap.add_argument("--units", choices=("gal", "l"), default="gal")
     ap.add_argument("--against", choices=("sample", "expected"),
                     default="sample",
@@ -267,7 +296,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if unknown:
         print(f"(ignoring unrecognized arguments: {unknown})")
     plot(args.data_dir, args.save, args.dpi, args.gridsize, args.units,
-         args.against == "expected")
+         args.against == "expected", args.cmap)
     return 0
 
 

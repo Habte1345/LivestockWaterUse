@@ -206,24 +206,7 @@ BROILER_FRACTION = 0.78
 # percent of dairy water use and 8 percent of hog water use. At 0.25 a row
 # is a county herd, and the figures are 95 and 50 percent. The second is
 # the quantity the pipeline actually needs.
-HERD_SPREAD = 1.0
-
-# Reference climate at which the response equations are evaluated when
-# building the MLR target.
-#
-# The MLR produces a GENERIC coefficient: one that depends on the animal,
-# not on where or when it is kept. Spatial and temporal variability is
-# introduced afterwards, by the climate-transfer ML. Evaluating the
-# response equations at the sampled climate instead would write a climate
-# signal into the target that the physiological predictors cannot see, and
-# it would appear as unexplainable vertical spread in the fit -- for hogs
-# the water-to-feed ratio alone moves the target by a factor of two across
-# the sampled temperature range.
-#
-# The reference is the median of the sampled distribution, so the generic
-# coefficient corresponds to an animal under average conditions.
-REF_CLIMATE = dict(temp_c=13.0, temp_min_c=7.5, rh_pct=64.0,
-                   wind_kmh=11.2, sunlight_h=11.0)
+HERD_SPREAD = 0.25
 
 # ---------------------------------------------------------------------------
 # LITERATURE-COMPILED PHYSIOLOGY AND WCC (manuscript Table 1)
@@ -562,23 +545,27 @@ def sample_physiology(rng, n: int, name: str) -> pd.DataFrame:
 
 def map_to_literature_wcc(values, name: str, rep=None):
     """
-    Put the equation-derived WCC on the tabulated LEVEL by an affine
-    rescale: shift and stretch so the mean and standard deviation match the
-    literature, and change nothing else.
+    Map the equation-derived WCC onto the tabulated LEVEL.
 
-        WCC = mean_lit + std_lit * (eq - mean_eq) / std_eq
+    The published intake equations give the RESPONSE -- how water use moves
+    with temperature, humidity, body weight and intake. The literature
+    table gives the LEVEL. The transform below keeps the first and takes
+    the second.
 
-    The published intake equations supply the RESPONSE -- how water use
-    moves with body weight, intake and lactation -- and the literature
-    supplies the LEVEL. An affine transform is the only one that adopts the
-    second without distorting the first.
+    IT MATCHES THE MEAN AND STANDARD DEVIATION, NOT THE FIVE QUANTILES.
+    Interpolating through the tabulated quantiles reproduces them exactly,
+    which sounds preferable until you look at what they are: the dairy row
+    has q50 = 36.40 and q75 = 37.30, so a quarter of every sample is forced
+    into a 0.9 gal/d band -- 1.6 percent of the range. Beef is tighter
+    still, at 0.30 gal/d. Quantiles that close are an artifact of compiling
+    a handful of commonly cited figures, not a real feature of the
+    distribution, and honouring them exactly produces the dense clumps and
+    empty gaps that made the sample cloud unreadable.
 
-    Earlier versions mapped the ranks of the equation output onto a
-    tabulated distribution. That reproduces the marginal exactly, but it is
-    a nonlinear transform: it bends the straight relationship between the
-    predictors and the target, and the bend appears as curvature in the
-    fitted cloud. Matching the first two moments keeps the relationship
-    linear, which is what a linear model is being asked to recover.
+    Matching mean and standard deviation keeps the central tendency and the
+    spread the literature reports, gives a smooth unimodal distribution,
+    and leaves the ordering from the equations untouched, which is what
+    carries the climate sensitivity into the regression.
     """
     v = np.asarray(values, dtype=float)
     ok = np.isfinite(v)
@@ -591,13 +578,23 @@ def map_to_literature_wcc(values, name: str, rep=None):
     if name == "poultry" and not POULTRY_WCC_USE_MEAN:
         # The tabulated poultry mean of 0.04 sits below its own 25th
         # percentile of 0.08, which no distribution can satisfy. The
-        # percentiles are taken as authoritative.
+        # percentiles are taken as authoritative, implying a mean near the
+        # median; see the note on LITERATURE.
         mean = float(q["q50"])
 
-    src = v[ok]
-    sd = src.std()
-    z = (src - src.mean()) / (sd if sd > 0 else 1.0)
-    out[ok] = (mean + std * z) * L_PER_GAL          # gal/d -> L/d
+    # A TRUNCATED normal, not a clipped one. The tabulated minimum sits
+    # about 1.5 standard deviations below the mean for dairy, so a plain
+    # normal would put seven percent of the samples past it, and clipping
+    # would stack every one of them on the bound -- reintroducing exactly
+    # the spike this transform exists to avoid. Truncating redistributes
+    # that mass through the body of the distribution instead.
+    from scipy.stats import truncnorm
+    lo, hi = float(q["min"]), float(q["max"])
+    a, b = (lo - mean) / std, (hi - mean) / std
+
+    ranks = pd.Series(v[ok]).rank(method="average").to_numpy()
+    probs = np.clip((ranks - 0.5) / ok.sum(), 1e-6, 1 - 1e-6)
+    out[ok] = truncnorm.ppf(probs, a, b, loc=mean, scale=std) * L_PER_GAL
     return out
 
 
@@ -670,8 +667,7 @@ def gen_dairy(rng, n):
     na_g_d = np.where(lactating > 0, rng.uniform(40.0, 90.0, n),
                       rng.uniform(20.0, 50.0, n))
 
-    eq = dairy_fwi_murphy(phys["dmi_kg_d"], phys["lm_l_d"], na_g_d,
-                          REF_CLIMATE["temp_min_c"])
+    eq = dairy_fwi_murphy(phys["dmi_kg_d"], phys["lm_l_d"], na_g_d, tmin)
     df = _finish("dairy_cattle", phys, clim, eq, rng,
                  {"lactating": lactating, "milk_kg_d": phys["lm_l_d"],
                   "crosscheck_l_d": dairy_fwi_nasem(
@@ -699,7 +695,7 @@ def gen_beef(rng, n):
     tmean, tmin, rh, wind, sun = clim
     phys = sample_physiology(rng, n, "beef_cattle")
 
-    eq = beef_wi_winchester(phys["dmi_kg_d"], REF_CLIMATE["temp_c"])
+    eq = beef_wi_winchester(phys["dmi_kg_d"], tmean)
     return _finish("beef_cattle", phys, clim, eq, rng,
                    {"ceti": ceti(tmean, rh, wind, sun),
                     "crosscheck_l_d": beef_wi_nasem(
@@ -724,15 +720,10 @@ def gen_hogs(rng, n):
     # breeding herd is in lactation at any time, and a lactating sow drinks
     # far more than any other class. This is the swine analogue of the
     # dairy lactation term; the breeding share alone is not lactation.
-    # L for swine is the lactation level in L/d, taken directly from the
-    # tabulated LM column, exactly as for dairy cattle. Expressing it as a
-    # share instead put the term on a different scale from the one Table 1
-    # documents, and the fitted coefficient then produced water use far
-    # above the tabulated maximum when evaluated over the tabulated range.
-    lactating_sows = phys["lm_l_d"].to_numpy(float)
+    LACTATING_SHARE = 0.35
+    lactating_sows = breeding * LACTATING_SHARE
 
-    wfr = (swine_water_feed_ratio(REF_CLIMATE["temp_c"])
-           * (1.0 + 0.028 * lactating_sows))
+    wfr = swine_water_feed_ratio(tmean) * (1.0 + 0.55 * lactating_sows)
     eq = phys["dmi_kg_d"].to_numpy() * wfr
     return _finish("hogs", phys, clim, eq, rng,
                    {"breeding": breeding, "lactating_sows": lactating_sows,
@@ -755,9 +746,8 @@ def gen_poultry(rng, n, broiler_fraction=BROILER_FRACTION):
     layer = np.clip(rng.normal(1.0 - broiler_fraction, 0.22, n), 0.02, 0.98)
 
     fi = phys["dmi_kg_d"].to_numpy()
-    wfr = (layer * layer_water_feed_ratio(REF_CLIMATE["temp_c"])
-           + (1.0 - layer) * 1.77)
-    heat = broiler_coefficient(REF_CLIMATE["temp_c"]) / 5.28
+    wfr = layer * layer_water_feed_ratio(tmean) + (1.0 - layer) * 1.77
+    heat = broiler_coefficient(tmean) / 5.28
     eq = fi * wfr * heat
     return _finish("poultry", phys, clim, eq, rng,
                    {"layer": layer, "crosscheck_l_d": fi * 2.0})
@@ -785,30 +775,12 @@ def fit_mlr(rep: Report, name: str, df: pd.DataFrame,
     # unexplained by the features, and the right thing for the surrogate to
     # be scored against. wcc_expected_l_d holds the noise-free equation
     # value and is what the regression figure plots on its x axis.
-    # Fitted in gal head-1 d-1, the units of the literature table, so the
-    # published coefficients reproduce those values directly rather than
-    # requiring a conversion the reader has to apply.
-    # Fitted in gallons per head per day, the unit of the published Table 2
-    # equations, so the printed coefficients are directly usable.
-    y = df["wcc_gal_d"].to_numpy(dtype=float)
+    y = df["wcc_l_d"].to_numpy(dtype=float)
 
     Xtr, Xte, ytr, yte = train_test_split(
         X, y, test_size=test_size, random_state=rng_seed)
 
-    # Ordinary least squares can return a negative coefficient large
-    # enough to drive the prediction below zero at the low end of the
-    # fitted range -- the poultry equation did exactly that, giving
-    # -0.02 gal/d at low intake, which is physically impossible. The fit
-    # is therefore constrained so that no prediction is negative anywhere
-    # in the fitted domain, by shifting the intercept upward if OLS would
-    # otherwise cross zero. Slopes are unchanged, so the physiological
-    # sensitivities the table is meant to convey are preserved.
     model = LinearRegression().fit(Xtr, ytr)
-    lo = float(model.predict(X).min())
-    if lo < 0:
-        model.intercept_ = float(model.intercept_) - lo
-        rep(f"  {name}: intercept raised by {abs(lo):.4f} so the equation "
-            f"cannot return a negative WCC within the fitted range")
     pred_tr, pred_te = model.predict(Xtr), model.predict(Xte)
 
     coefs = {"intercept": float(model.intercept_)}
@@ -836,7 +808,7 @@ def fit_mlr(rep: Report, name: str, df: pd.DataFrame,
         # How the surrogate scores against a single noisy realisation, which
         # is the harder and less relevant comparison, reported for context.
         "r2_vs_noisy_sample": float(r2_score(
-            df["wcc_gal_d"].to_numpy(dtype=float),
+            df["wcc_l_d"].to_numpy(dtype=float),
             model.predict(X))),
         "slope_pred_vs_actual": float(
             LinearRegression().fit(yte.reshape(-1, 1), pred_te).coef_[0]),
@@ -844,7 +816,7 @@ def fit_mlr(rep: Report, name: str, df: pd.DataFrame,
     stats["pct_of_attainable"] = float(
         100 * stats["r2_test"] / stats["r2_noise_floor"])
 
-    eq = f"WCC (gal/head/day) = {coefs['intercept']:.4f}"
+    eq = f"WCC (L/d) = {coefs['intercept']:.4f}"
     for f in feats:
         c = coefs[f]
         eq += f" {'+' if c >= 0 else '-'} {abs(c):.5f}*{f}"
@@ -909,46 +881,8 @@ def generate_surrogate(name: str, coefs: dict, n: int, seed: int,
     df = add_interactions(name, df)
     df = df.rename(columns={"wcc_l_d": "wcc_literature_l_d",
                             "wcc_gal_d": "wcc_literature_gal_d"})
-    df["wcc_mlr_gal_d"] = predict_wcc(coefs, name, df)
-
-    # The fitted line plus a draw from its residual distribution, not the
-    # line alone. A regression used as a SURROGATE has to stand in for the
-    # literature WCC, and the literature WCC has scatter about the
-    # relationship; the conditional mean does not. Without this the
-    # surrogate is deterministic while its target carries noise, so it
-    # cannot reach the target's extremes and the agreement plot shows a
-    # cloud that is flat along its upper edge -- narrower in y than in x by
-    # exactly the residual standard deviation.
-    # A MULTIPLICATIVE residual, not an additive one.
-    #
-    # The regression used as a surrogate has to carry the scatter the
-    # literature shows about the relationship; the fitted line alone does
-    # not, and without it the agreement cloud is narrower in y than in x by
-    # exactly the residual standard deviation.
-    #
-    # The residual is proportional to the predicted value because an
-    # additive residual of fixed width is larger than the prediction itself
-    # near the origin: for hogs the smallest predictions are a few tenths
-    # of a gallon while the residual standard deviation is near one, so a
-    # large share of them cross zero. Truncating or redrawing those piles
-    # them against the bound and leaves a hard edge along the axis, which
-    # is the artefact this is meant to avoid. Scaling with the value keeps
-    # the relative spread constant, cannot produce a negative coefficient,
-    # and matches how intake measurements are actually reported -- as a
-    # percentage of the mean rather than an absolute volume.
-    rmse = float(coefs.get("rmse_test_l_d", 0.0) or 0.0)   # fit is in gal/d
-    mean_pred = float(df["wcc_mlr_gal_d"].mean())
-    if rmse > 0 and mean_pred > 0:
-        cv = rmse / mean_pred
-        sigma = np.sqrt(np.log1p(cv ** 2))          # lognormal, unit median
-        df["wcc_mlr_gal_d"] = df["wcc_mlr_gal_d"] * np.exp(
-            rng.normal(-0.5 * sigma ** 2, sigma, len(df)))
-
-    # predict_wcc returns gallons, since the fit is in gallons. Deriving
-    # litres by multiplying, not dividing: naming the gallon prediction
-    # "_l_d" and then converting again applied the conversion twice and
-    # shrank every predicted value by a factor of 3.785.
-    df["wcc_mlr_l_d"] = df["wcc_mlr_gal_d"] * L_PER_GAL
+    df["wcc_mlr_l_d"] = predict_wcc(coefs, name, df)
+    df["wcc_mlr_gal_d"] = df["wcc_mlr_l_d"] * GAL_PER_L
     df["livestock_type"] = name
     return df
 
@@ -1079,11 +1013,6 @@ def run(data_dir: str = DATA_DIR, meta_dir: str = META_DIR,
         for name in bar:
             bar.set_postfix_str(name)
             coefs, stats, _ = fit_mlr(rep, name, samples[name], test_size, seed)
-            # The residual scale travels with the coefficients, so the
-            # surrogate can add it back when standing in for the
-            # literature WCC.
-            coefs = dict(coefs)
-            coefs["rmse_test_l_d"] = stats["rmse_test_l_d"]
             coef_by_type[name] = coefs
             row = {"livestock_type": name}
             row.update(coefs)
@@ -1091,10 +1020,8 @@ def run(data_dir: str = DATA_DIR, meta_dir: str = META_DIR,
             all_stats.append(stats)
             # Surrogate prediction on the same rows, so the literature value
             # and the surrogate value sit side by side for comparison.
-            samples[name]["wcc_mlr_gal_d"] = predict_wcc(coefs, name,
-                                                         samples[name])
-            samples[name]["wcc_mlr_l_d"] = (samples[name]["wcc_mlr_gal_d"]
-                                            * L_PER_GAL)
+            samples[name]["wcc_mlr_l_d"] = predict_wcc(coefs, name, samples[name])
+            samples[name]["wcc_mlr_gal_d"] = samples[name]["wcc_mlr_l_d"] * GAL_PER_L
         bar.close()
 
         rep("\n" + "=" * 78)
@@ -1161,7 +1088,7 @@ def run(data_dir: str = DATA_DIR, meta_dir: str = META_DIR,
         eqs = []
         for row in all_coefs:
             name = row["livestock_type"]
-            eq = f"WCC (gal/head/day) = {row['intercept']:.4f}"
+            eq = f"WCC (L/d) = {row['intercept']:.4f}"
             for f in FEATURES[name]:
                 c = row[f]
                 eq += f" {'+' if c >= 0 else '-'} {abs(c):.5f}*{f}"

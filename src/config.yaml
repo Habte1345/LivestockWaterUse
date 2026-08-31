@@ -1,0 +1,76 @@
+# =====================================================================
+# LivestockWaterUse -- pipeline configuration
+#
+# Everything the pipeline needs is set here. Run it with:
+#
+#     python main.py                        # every stage, every animal
+#     python main.py --livestock hogs       # one animal
+#     python main.py --stage wcc wc         # selected stages
+#     python main.py --from ratio           # resume from a stage
+#     python main.py --dry-run              # show the plan, run nothing
+# =====================================================================
+
+repo: /scratch/hdagne1/LivestockWaterUse
+
+# Animals to process. Override on the command line with --livestock.
+livestock:
+  - dairy_cattle
+  - beef_cattle
+  - hogs
+  - poultry
+
+# ---------------------------------------------------------------------
+# Stage settings. Each block maps to one script; keys become command
+# line flags, so `n_samples: 50000` is passed as --n-samples 50000.
+# A key set to null or false is omitted; true becomes a bare flag.
+# ---------------------------------------------------------------------
+
+usgs:                       # extract_usgs_livestock.py
+  scope: conus
+  force_download: false
+  verbose: false
+
+usda:                       # usda_livestock.py
+  verbose: false
+
+climate:                    # era5_climate_GEE.py
+  project: ee-natohab1345             # REQUIRED: your Earth Engine Cloud project
+  start: 1960
+  end: 2022
+  freq: monthly
+  verbose: false
+
+mlr:                        # wcc_mlr.py
+  n_samples: 50000
+  seed: 42
+  test_size: 0.2
+  broiler_fraction: 0.78
+  verbose: false
+
+wcc:                        # wcc_ann_downscale.py
+  n_samples: 50000
+  seed: 42
+  hidden: [64, 32]
+  max_iter: 400
+  patience: 25
+  broiler_fraction: 0.78
+  verbose: false
+
+wc:                         # county_level_WC.py
+  interpolate: true         # required for the validation stage
+  verbose: false
+
+ratio:                      # ratio_ann_downscale.py
+  seed: 42
+  hidden: [16, 8]
+  max_iter: 600
+  folds: 7
+  verbose: false
+
+validate:                   # validate_against_usgs.py
+  quiet: false
+
+
+
+
+  
