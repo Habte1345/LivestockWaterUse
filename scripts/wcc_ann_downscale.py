@@ -270,7 +270,8 @@ def make_surrogate(wcc_mod, name: str, coefs: dict, n: int,
     # no county-level input can resolve, and the network would be scored
     # against noise it has no means of predicting.
     per_sample = wcc_mod.predict_wcc(coefs, name, df)
-    generic = float(np.nanmean(per_sample))
+    # generic = float(np.nanmean(per_sample))
+    generic = float(np.nanmean(per_sample)) * wcc_mod.L_PER_GAL
     df["wcc_mlr_generic_l_d"] = generic
     df["wcc_physiology_l_d"] = per_sample
 
