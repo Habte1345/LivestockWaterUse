@@ -19,7 +19,7 @@ Usage
     from plot_flux_panels import plot
     plot(FluxData, "Residual")
     plot(FluxData, "dairy_Wccs_adjusted", years=[1985, 1990, 1995, 2000, 2010, 2015])
-    plot(FluxData, "CL_WW", cmap="bwr")
+    plot(FluxData, "CL_WW", cmap="jet")
 """
 
 from __future__ import annotations
@@ -33,17 +33,6 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-import geopandas as gpd
-import numpy as np
-import xarray as xr
-from rasterio import features
-from affine import Affine
-import pandas as pd
-import pandas as pd, glob
-
-data_dir = r'/scratch/hdagne1/LivestockWaterUse/results/netCDF'
-FluxData =  xr.open_dataset(data_dir + '/County_Level_Dairy_Cattle_WC_WW_1985_2022_geo_USGS_WC_WW.nc', engine='netcdf4')
-FluxData
 
 CONUS_EXTENT = [-125, -66, 24, 50]
 CENSUS_YEARS = (2002, 2007, 2012, 2017, 2022)
@@ -52,12 +41,12 @@ CENSUS_YEARS = (2002, 2007, 2012, 2017, 2022)
 # should be symmetric about zero. A residual has a sign, so its colour must
 # read as direction; a magnitude does not.
 VARIABLES = {
-    "dairy_Wccs_adjusted": ("WCC [gal head$^{-1}$ day$^{-1}$]", "bwr", False),
-    "CL_WC": ("WC [Mgal day$^{-1}$]", "bwr", False),
-    "CL_WW": ("WW [Mgal day$^{-1}$]", "bwr", False),
-    "CL_ratio": ("Ratio [-]", "bwr", False),
-    "CL_cons_ratio_pred": ("Predicted ratio [-]", "bwr", False),
-    "CL_cons_ratio_USGS": ("USGS ratio [-]", "bwr", False),
+    "dairy_Wccs_adjusted": ("WCC [gal head$^{-1}$ day$^{-1}$]", "nipy_spectral_r", False),
+    "CL_WC": ("WC [Mgal day$^{-1}$]", "nipy_spectral_r", False),
+    "CL_WW": ("WW [Mgal day$^{-1}$]", "nipy_spectral_r", False),
+    "CL_ratio": ("Ratio [-]", "nipy_spectral_r", False),
+    "CL_cons_ratio_pred": ("Predicted ratio [-]", "nipy_spectral_r", False),
+    "CL_cons_ratio_USGS": ("USGS ratio [-]", "nipy_spectral_r", False),
     "Residual": ("Residual [-]", "bwr", True),
     "VALUE": ("Value", "bwr", False),
 }
@@ -121,7 +110,7 @@ def plot(ds, variable: str = "Residual",
                        f"Available: {list(ds.data_vars)}")
 
     default_label, default_cmap, default_sym = VARIABLES.get(
-        variable, (variable, "bwr", False))
+        variable, (variable, "jet", False))
     label = label or default_label
     cm = plt.get_cmap(cmap or default_cmap)
     symmetric = default_sym if symmetric is None else symmetric
@@ -153,6 +142,7 @@ def plot(ds, variable: str = "Residual",
     lon2d, lat2d = np.meshgrid(ds.lon.values, ds.lat.values)
     nrow = int(np.ceil(len(years) / ncol))
     fig = plt.figure(figsize=(14, 4), dpi=200)
+
     fig.subplots_adjust(wspace=0.02, hspace=0.25)
 
     for i, (t, year) in enumerate(zip(idx, years), start=1):
@@ -162,17 +152,17 @@ def plot(ds, variable: str = "Residual",
         ax.set_aspect("auto")
 
         ax.add_feature(cfeature.LAND, facecolor="#f3efe1")
-        ax.add_feature(cfeature.OCEAN, facecolor="#f3f3f3")
+        ax.add_feature(cfeature.OCEAN, facecolor="#cfe3f0")
         ax.add_feature(cfeature.LAKES, facecolor="#cfe3f0",
-                       edgecolor="#f0f2f4", linewidth=0.4)
+                       edgecolor="#8fa8b8", linewidth=0.4)
 
         ax.pcolormesh(lon2d, lat2d, data[t], cmap=cm, norm=norm,
                       shading="auto", transform=ccrs.PlateCarree(),
                       zorder=5)
 
-        ax.add_feature(cfeature.STATES, edgecolor="#272525",
+        ax.add_feature(cfeature.STATES, edgecolor="#888888",
                        linewidth=0.5, zorder=6)
-        ax.add_feature(cfeature.COASTLINE, edgecolor="#E7DFDF",
+        ax.add_feature(cfeature.COASTLINE, edgecolor="#555555",
                        linewidth=0.7, zorder=6)
         ax.set_title(f"{year}", fontsize=13, fontweight="bold")
 
@@ -183,7 +173,7 @@ def plot(ds, variable: str = "Residual",
         if v.size:
             ins = ax.inset_axes([0.78, 0.05, 0.19, 0.40])
             lim_lo, lim_hi = norm.vmin, norm.vmax
-            ins.hist(np.clip(v, lim_lo, lim_hi), bins=30, color="#7dc98a",
+            ins.hist(np.clip(v, lim_lo, lim_hi), bins=30, color="#c1c97d",
                      edgecolor="black", linewidth=0.4,
                      orientation="horizontal")
             mean_val = float(np.mean(v))
@@ -210,5 +200,4 @@ def plot(ds, variable: str = "Residual",
     cb.ax.tick_params(labelsize=9)
 
     _show(fig)
-    plt.close(fig)
     return fig

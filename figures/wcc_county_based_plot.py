@@ -139,7 +139,7 @@ def plot(data_dir: str = DATA_DIR, year: Optional[int] = None,
     # set_aspect("auto") was stretching each panel to fill its axes, which
     # is what distorted the earlier layout: on a choropleth the eye reads
     # area as magnitude, so the geometry has to stay honest.
-    fig, axes = plt.subplots(2, 2, figsize=(12, 3),
+    fig, axes = plt.subplots(2, 2, figsize=(12, 6),
                              subplot_kw={"projection": ccrs.PlateCarree()},
                              constrained_layout=True)
     axes = axes.ravel()

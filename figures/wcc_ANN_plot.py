@@ -124,8 +124,7 @@ def plot(data_dir: str = DATA_DIR, split: str = "both", units: str = "l",
     hist = pd.read_feather(hist_path)
 
     k = GAL_PER_L if units == "gal" else 1.0
-    unit_label = ("gal head$^{-1}$ day$^{-1}$" if units == "gal"
-                  else "L head$^{-1}$ day$^{-1}$")
+    # unit_label = ["gal head$^{-1}$ day$^{-1}$"]
 
     fig, axes = plt.subplots(2, 2, figsize=(11.5, 10))
     axes = axes.flatten()
@@ -167,8 +166,8 @@ def plot(data_dir: str = DATA_DIR, split: str = "both", units: str = "l",
                 transform=ax.transAxes, fontsize=13,
                 verticalalignment="top")
         ax.set_title(title, fontsize=13, fontweight="bold")
-        ax.set_xlabel(f"Surrogate WCC [{unit_label}]", fontsize=11)
-        ax.set_ylabel(f"ANN-transferred WCC [{unit_label}]", fontsize=11)
+        ax.set_xlabel(f"Surrogate WCC [gal head$^{-1}$ day$^{-1}$]", fontsize=16)
+        ax.set_ylabel(f"transferred WCC [gal head$^{-1}$ day$^{-1}$]", fontsize=16)
         ax.grid(alpha=0.25, lw=0.5)
 
         # Inset: the learning curves for this type.

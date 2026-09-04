@@ -170,16 +170,16 @@ def plot(data_dir: str = DATA_DIR, year: Optional[int] = None,
               f"[{norm.vmin:.4g} .. {norm.vmax:.4g}]"
               + (f"   no value {n_miss:,}" if n_miss else ""))
 
-    fig.suptitle("County-level livestock water consumption"
-                 + (f", {year}" if year else ""),
-                 fontsize=15, fontweight="bold")
+    # fig.suptitle("County-level livestock water consumption"
+    #              + (f", {year}" if year else ""),
+    #              fontsize=15, fontweight="bold")
     _show(fig)
     return fig
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(
-        description="County water consumption maps by livestock type.",
+        # description="County water consumption maps by livestock type.",
         allow_abbrev=False)
     ap.add_argument("--data-dir", default=DATA_DIR)
     ap.add_argument("--year", type=int, default=None)

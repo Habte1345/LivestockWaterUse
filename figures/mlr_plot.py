@@ -79,7 +79,7 @@ plt.rcParams["grid.linewidth"] = 0.6
 # sits in its white middle and the panel washes out. The density is put on
 # a log scale so the colour spans the orders of magnitude actually present
 # between the sparse tails and the dense core.
-CMAP = "jet"
+CMAP = "bwr"
 
 
 def _show(fig, screen_dpi: int = 110) -> None:
